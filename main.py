@@ -1,8 +1,6 @@
 import os
 import random
-import smtplib
 from datetime import datetime, timedelta
-from email.mime.text import MIMEText
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -24,7 +22,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 kun
 
 GMAIL_USER = os.environ.get("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
 
 CODE_EXPIRE_MINUTES = 10
 
@@ -78,16 +76,15 @@ def get_db():
     finally:
         db.close()
 
-# ---------- Email yuborish funksiyasi ----------
+# ---------- Email yuborish funksiyasi (Brevo API orqali) ----------
 def send_verification_email(to_email: str, code: str):
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+    if not BREVO_API_KEY or not GMAIL_USER:
         raise HTTPException(
             status_code=500,
-            detail="Email yuborish sozlanmagan (GMAIL_USER yoki GMAIL_APP_PASSWORD yo'q)",
+            detail="Email yuborish sozlanmagan (BREVO_API_KEY yoki GMAIL_USER yo'q)",
         )
 
-    subject = "TELC B1 - Tasdiqlash kodi"
-    body = f"""Assalomu alaykum!
+    body_text = f"""Assalomu alaykum!
 
 Sizning TELC B1 ilovasiga ro'yxatdan o'tish uchun tasdiqlash kodingiz:
 
@@ -99,17 +96,32 @@ Agar siz bu so'rovni yubormagan bo'lsangiz, bu xabarni e'tiborsiz qoldiring.
 TELC B1 jamoasi
 """
 
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = GMAIL_USER
-    msg["To"] = to_email
+    payload = {
+        "sender": {"name": "TELC B1", "email": GMAIL_USER},
+        "to": [{"email": to_email}],
+        "subject": "TELC B1 - Tasdiqlash kodi",
+        "textContent": body_text,
+    }
+
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+    }
 
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_USER, [to_email], msg.as_string())
-    except Exception as e:
+        response = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            json=payload,
+            headers=headers,
+            timeout=15,
+        )
+        if response.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Email yuborishda xatolik: {response.text}",
+            )
+    except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Email yuborishda xatolik: {str(e)}")
 
 # ---------- Yordamchi funksiyalar ----------
